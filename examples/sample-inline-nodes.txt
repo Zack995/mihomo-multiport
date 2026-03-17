@@ -1,0 +1,2 @@
+- {name: JPN 01, server: example.com, port: 20201, type: ss, cipher: aes-128-gcm, password: secret, plugin: obfs, plugin-opts: {mode: http, host: www.microsoft.com}, udp: true, tfo: false}
+- {name: USA 01, server: example.com, port: 20251, type: ss, cipher: aes-128-gcm, password: secret, udp: true}

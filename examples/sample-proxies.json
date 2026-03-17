@@ -1,0 +1,20 @@
+[
+  {
+    "name": "USA 01",
+    "type": "ss",
+    "server": "example.net",
+    "port": 30501,
+    "cipher": "aes-128-gcm",
+    "password": "secret",
+    "udp": true
+  },
+  {
+    "name": "JPN 02",
+    "type": "ss",
+    "server": "example.net",
+    "port": 30502,
+    "cipher": "aes-128-gcm",
+    "password": "secret",
+    "udp": true
+  }
+]

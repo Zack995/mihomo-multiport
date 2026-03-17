@@ -1,0 +1,15 @@
+proxies:
+  - name: "SGP 01"
+    type: ss
+    server: example.org
+    port: 30401
+    cipher: aes-128-gcm
+    password: secret
+    udp: true
+  - name: "HKG 01"
+    type: ss
+    server: example.org
+    port: 30402
+    cipher: aes-128-gcm
+    password: secret
+    udp: true

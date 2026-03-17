@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mihomo-multiport Console</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="backdrop"></div>
+    <main class="shell">
+      <section class="hero card reveal">
+        <div class="hero-copy">
+          <p class="eyebrow">Open Source Ready</p>
+          <h1>mihomo-multiport 管理台</h1>
+          <p class="lede">
+            根据订阅或节点列表自动生成多个本地代理端口，让不同节点以独立入口运行，方便在浏览器、客户端或容器里自由切换。
+          </p>
+        </div>
+        <div class="hero-actions">
+          <button id="refreshBtn" class="btn btn-secondary">刷新状态</button>
+          <button id="startAllBtn" class="btn btn-primary">启动全部</button>
+          <button id="stopAllBtn" class="btn btn-ghost">停止全部</button>
+          <button id="testAllBtn" class="btn btn-secondary">测试全部</button>
+        </div>
+      </section>
+
+      <section class="dashboard reveal">
+        <article class="card stats-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Runtime</p>
+              <h2>运行概览</h2>
+            </div>
+            <span id="statusBadge" class="badge">加载中</span>
+          </div>
+          <div class="stats-grid">
+            <div class="stat">
+              <span class="stat-label">实例总数</span>
+              <strong id="totalCount">0</strong>
+            </div>
+            <div class="stat">
+              <span class="stat-label">运行中</span>
+              <strong id="runningCount">0</strong>
+            </div>
+            <div class="stat">
+              <span class="stat-label">已停止</span>
+              <strong id="stoppedCount">0</strong>
+            </div>
+          </div>
+          <dl class="meta-list">
+            <div>
+              <dt>实例文件</dt>
+              <dd id="instancesFile">-</dd>
+            </div>
+            <div>
+              <dt>mihomo</dt>
+              <dd id="mihomoPath">-</dd>
+            </div>
+          </dl>
+        </article>
+
+        <article class="card import-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Import</p>
+              <h2>标准导入</h2>
+            </div>
+          </div>
+          <div class="form-grid">
+            <label>
+              <span>格式</span>
+              <select id="formatSelect">
+                <option value="auto">自动识别</option>
+                <option value="yaml">Mihomo/Clash YAML</option>
+                <option value="inline">Clash 行内节点</option>
+                <option value="json">JSON</option>
+              </select>
+            </label>
+            <label>
+              <span>起始端口</span>
+              <input id="basePortInput" type="number" value="7891" min="1" />
+            </label>
+          </div>
+          <label class="toggle">
+            <input id="stopBeforeImport" type="checkbox" checked />
+            <span>导入前自动停止当前受管实例</span>
+          </label>
+          <label class="upload">
+            <span>粘贴或选择文件</span>
+            <input id="fileInput" type="file" accept=".txt,.yaml,.yml,.json" />
+          </label>
+          <textarea
+            id="importText"
+            placeholder="支持 Mihomo/Clash YAML、JSON、- {name: ...} 行内节点；多段内容可用 --- 分隔后一次导入"
+          ></textarea>
+          <div class="form-actions">
+            <button id="importBtn" class="btn btn-primary">导入并生成配置</button>
+            <span class="helper">支持一次导入多段内容，系统会自动识别并合并生成实例。</span>
+          </div>
+        </article>
+      </section>
+
+      <section class="card instances-panel reveal">
+        <div class="panel-head panel-head-spread">
+          <div>
+            <p class="eyebrow">Instances</p>
+            <h2>实例管理</h2>
+          </div>
+          <p id="panelHint" class="helper">可以逐个手动启动、停止、测试和查看日志。</p>
+        </div>
+        <div class="toolbar">
+          <label class="toolbar-field">
+            <span>搜索实例</span>
+            <input id="searchInput" type="search" placeholder="按名称或地区筛选" />
+          </label>
+          <label class="toolbar-field">
+            <span>状态筛选</span>
+            <select id="stateFilter">
+              <option value="all">全部</option>
+              <option value="running">运行中</option>
+              <option value="stopped">已停止</option>
+              <option value="missing">配置缺失</option>
+            </select>
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>实例</th>
+                <th>端口</th>
+                <th>地区</th>
+                <th>状态</th>
+                <th>容器地址</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="instancesBody">
+              <tr>
+                <td colspan="6" class="empty">正在加载实例...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card report-panel reveal">
+        <div class="panel-head panel-head-spread">
+          <div>
+            <p class="eyebrow">Reports</p>
+            <h2>最近一次操作</h2>
+          </div>
+          <p id="reportHint" class="helper">导入、启动、停止、测试结果会展示在这里。</p>
+        </div>
+        <div id="reportSummary" class="report-summary">暂无操作记录</div>
+        <div id="reportList" class="report-list"></div>
+      </section>
+
+      <section class="card logs-panel reveal">
+        <div class="panel-head panel-head-spread">
+          <div>
+            <p class="eyebrow">Logs</p>
+            <h2>日志预览</h2>
+          </div>
+          <p id="logMeta" class="helper">点击实例的“日志”按钮查看最后 40 行。</p>
+        </div>
+        <pre id="logOutput">暂无日志</pre>
+      </section>
+    </main>
+
+    <template id="instanceRowTemplate">
+      <tr>
+        <td class="instance-name">
+          <strong data-field="name"></strong>
+          <span data-field="displayName"></span>
+        </td>
+        <td data-field="port"></td>
+        <td data-field="location"></td>
+        <td><span data-field="state" class="pill"></span></td>
+        <td data-field="docker"></td>
+        <td class="actions">
+          <button data-action="start" class="table-btn">启动</button>
+          <button data-action="stop" class="table-btn">停止</button>
+          <button data-action="test" class="table-btn">测试</button>
+          <button data-action="copy" class="table-btn">复制地址</button>
+          <button data-action="delete" class="table-btn table-btn-danger">删除</button>
+          <button data-action="log" class="table-btn">日志</button>
+        </td>
+      </tr>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

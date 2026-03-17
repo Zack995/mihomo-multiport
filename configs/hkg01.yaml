@@ -1,0 +1,28 @@
+# Replace the sample node values below with your real node details.
+mixed-port: 7891
+mode: rule
+log-level: info
+allow-lan: false
+
+proxies:
+  - name: "hkg01"
+    type: ss
+    server: "example-hk.server"
+    port: 20001
+    cipher: aes-128-gcm
+    password: "replace-me"
+    plugin: obfs
+    plugin-opts:
+      mode: http
+      host: "www.microsoft.com"
+    udp: true
+    tfo: false
+
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies:
+      - "hkg01"
+
+rules:
+  - MATCH,PROXY

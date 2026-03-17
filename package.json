@@ -1,0 +1,21 @@
+{
+  "name": "mihomo-multiport",
+  "version": "0.1.0",
+  "description": "Multi-port mihomo subscription manager with a local web console.",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "mihomo-multiport": "./src/cli.js"
+  },
+  "scripts": {
+    "audit:release": "node ./scripts/release-audit.js",
+    "check": "node --check ./src/cli.js && node --check ./src/server.js && node --check ./src/lib/constants.js && node --check ./src/lib/helpers.js && node --check ./src/lib/importers.js && node --check ./src/lib/instances.js && node --check ./src/lib/runtime.js && node --check ./public/app.js",
+    "import": "node ./src/cli.js import",
+    "start": "node ./src/cli.js start",
+    "stop": "node ./src/cli.js stop",
+    "status": "node ./src/cli.js status",
+    "proxy:test": "node ./src/cli.js test",
+    "test": "node --test ./tests/*.test.js",
+    "web": "node ./src/cli.js serve"
+  }
+}

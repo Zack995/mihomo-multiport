@@ -1,0 +1,3 @@
+# name,config_path,expected_loc,expected_ip
+hkg01,configs/hkg01.yaml,HK,
+sgp01,configs/sgp01.yaml,SG,
