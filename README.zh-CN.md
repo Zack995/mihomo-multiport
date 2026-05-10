@@ -79,7 +79,7 @@ npm run web
 默认地址：
 
 ```text
-http://127.0.0.1:8787
+http://127.0.0.1:8799
 ```
 
 ## 支持的导入格式
@@ -188,6 +188,33 @@ npm run audit:release
 ## CI
 
 - GitHub Actions workflow: [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)
+
+## 接入 zzc_center
+
+本项目已注册到本机的 **zzc_center** 平台。
+
+- `/health` 严格符合平台健康合约，zzc_center 每 30 秒自动巡检
+- `/api/nodes` 返回当前所有节点：名称、端口、scheme、运行状态、proxyUrl、dockerProxyUrl
+- `/api/docs` 返回所有对外路由的 JSON 接口目录
+- 后台 5 分钟周期任务巡检**正在运行**的节点（走代理打 Cloudflare trace），状态变化（pass↔fail）时通过项目级 `alerts` 渠道发钉钉告警
+- zzc_center 自身对 `/health` 异常的告警走平台保留的 `health-alerts` 渠道（运维群），业务侧不要往这个名字推消息
+
+### 配置
+
+1. 复制 `.env.example` 为 `.env.local`，填入 `ZZC_BASE_URL`、`ZZC_API_KEY`（zzc_center 后台颁发），并 `chmod 600 .env.local`
+2. 启动控制台：`npm run web`（默认 `127.0.0.1:8799`）。启动时会调用 `ensureChannels` 从全局 `default` 渠道克隆出本项目的 `alerts` 渠道（已存在则跳过），然后开始节点巡检
+3. 跑接入自检：`npm run zzc:selfcheck` —— 校验 `/health` 合约、（跳过的）PG/Redis、以及 `/api/notify` 通路
+
+### 可调环境变量
+
+| Env | 默认 | 作用 |
+|---|---|---|
+| `NODE_HEALTH_CHECK_ENABLED` | `true` | 设为 `false` 即关闭节点巡检 |
+| `NODE_HEALTH_CHECK_INTERVAL_MS` | `300000`（5 分钟） | 巡检间隔；硬下限 30 秒 |
+| `NODE_HEALTH_CHECK_COLD_START_GRACE_MS` | `30000` | 节点刚切换为 running 后此窗口内不告警 |
+| `NODE_HEALTH_CHECK_CHANNEL` | `alerts` | 自定义告警渠道名 |
+
+凭证只存在于 `.env.local`（已 gitignore）。如需轮换，到 zzc_center 后台吊销旧 Key 并重发。
 
 ## 许可证
 

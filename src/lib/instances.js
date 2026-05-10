@@ -192,11 +192,13 @@ function readConfigMetadata(configPath) {
 }
 
 function getRuntimePaths(name) {
-  const workdir = path.join(PATHS.runtimeDir, name);
+  const runtimeRoot = resolveProjectPath(process.env.MIHOMO_RUNTIME_DIR || PATHS.runtimeDir);
+  const logsRoot = resolveProjectPath(process.env.MIHOMO_LOGS_DIR || PATHS.logsDir);
+  const workdir = path.join(runtimeRoot, name);
   return {
     workdir,
     pidFile: path.join(workdir, "mihomo.pid"),
-    logFile: path.join(PATHS.logsDir, `${name}.log`),
+    logFile: path.join(logsRoot, `${name}.log`),
   };
 }
 
@@ -281,8 +283,8 @@ function removeInstanceRecord(name, filePath = getPreferredInstancesFile()) {
 }
 
 function ensureRuntimeLayout() {
-  ensureDir(PATHS.logsDir);
-  ensureDir(PATHS.runtimeDir);
+  ensureDir(resolveProjectPath(process.env.MIHOMO_LOGS_DIR || PATHS.logsDir));
+  ensureDir(resolveProjectPath(process.env.MIHOMO_RUNTIME_DIR || PATHS.runtimeDir));
 }
 
 module.exports = {

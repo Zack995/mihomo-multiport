@@ -79,7 +79,7 @@ npm run web
 Default address:
 
 ```text
-http://127.0.0.1:8787
+http://127.0.0.1:8799
 ```
 
 ## Supported Input Formats
@@ -192,6 +192,33 @@ Recommended to keep:
 ## CI
 
 - GitHub Actions workflow: [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)
+
+## zzc_center Integration
+
+This project is registered with the local **zzc_center** platform.
+
+- `/health` follows the platform health contract (probed every 30s by zzc_center)
+- `/api/nodes` returns the current list of nodes with port, scheme, running state, proxyUrl, dockerProxyUrl
+- `/api/docs` returns a JSON catalogue of every public route
+- A 5-minute background monitor probes only the *running* mihomo nodes via Cloudflare trace and sends a DingTalk alert on state transitions (pass→fail / fail→pass) through the project-level `alerts` channel
+- Health-status changes detected by zzc_center itself flow into the platform-reserved `health-alerts` channel automatically — do not push business messages there
+
+### Setup
+
+1. Copy `.env.example` → `.env.local`, fill `ZZC_BASE_URL` + `ZZC_API_KEY` (issued from zzc_center admin), `chmod 600 .env.local`.
+2. Start the console: `npm run web` (default `127.0.0.1:8799`). On boot it calls `ensureChannels` to clone `alerts` from the global `default` channel if missing, then starts the node monitor.
+3. Run the self-check: `npm run zzc:selfcheck` — it validates `/health`, the (skipped) PG/Redis slots, and the `/api/notify` round-trip.
+
+### Tunables
+
+| Env | Default | Effect |
+|---|---|---|
+| `NODE_HEALTH_CHECK_ENABLED` | `true` | Set to `false` to disable the periodic monitor |
+| `NODE_HEALTH_CHECK_INTERVAL_MS` | `300000` (5 min) | Probe cadence; clamped to ≥ 30s |
+| `NODE_HEALTH_CHECK_COLD_START_GRACE_MS` | `30000` | Skip nodes that just transitioned to running within this window |
+| `NODE_HEALTH_CHECK_CHANNEL` | `alerts` | Override the zzc channel name |
+
+Credentials live only in `.env.local` (gitignored). To rotate, reissue the API key from zzc_center admin.
 
 ## License
 

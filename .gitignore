@@ -7,3 +7,10 @@ instances.generated.json
 logs/
 nodes-inline.txt
 runtime/
+
+# secrets
+.env
+.env.local
+.env.*.local
+*.env
+secrets/

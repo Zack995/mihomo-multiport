@@ -6,6 +6,7 @@ const state = {
 
 const els = {
   basePortInput: document.getElementById("basePortInput"),
+  copyAllConfigsBtn: document.getElementById("copyAllConfigsBtn"),
   fileInput: document.getElementById("fileInput"),
   formatSelect: document.getElementById("formatSelect"),
   importBtn: document.getElementById("importBtn"),
@@ -27,7 +28,6 @@ const els = {
   statusBadge: document.getElementById("statusBadge"),
   stopAllBtn: document.getElementById("stopAllBtn"),
   stoppedCount: document.getElementById("stoppedCount"),
-  stopBeforeImport: document.getElementById("stopBeforeImport"),
   template: document.getElementById("instanceRowTemplate"),
   testAllBtn: document.getElementById("testAllBtn"),
   totalCount: document.getElementById("totalCount"),
@@ -83,6 +83,29 @@ function rowText(value, fallback = "-") {
 
 function showError(error) {
   window.alert(error.message || String(error));
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "readonly");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+
+  if (!copied) {
+    throw new Error("当前浏览器不支持复制到剪贴板。");
+  }
 }
 
 function reportCardClass(item) {
@@ -269,20 +292,23 @@ async function importNodes() {
       text: els.importText.value,
       basePort: Number(els.basePortInput.value) || 7891,
       format: els.formatSelect.value,
-      stopBeforeImport: els.stopBeforeImport.checked,
     },
     els.importBtn,
   );
 
-  els.panelHint.textContent = `最近一次导入：${data.import.count} 个节点，格式 ${data.import.format}。`;
+  const addedCount = data.import.count;
+  const totalCount = data.meta?.summary?.total ?? data.instances.length;
+  els.panelHint.textContent = `最近一次导入：新增 ${addedCount} 个，当前共 ${totalCount} 个（格式 ${data.import.format}）。`;
+  const addedNames = new Set((data.import.added || []).map((item) => item.name));
   renderReport("导入完成", {
     summary: {
-      imported: data.import.count,
+      added: addedCount,
+      total: totalCount,
       format: data.import.format,
     },
     results: data.instances.map((item) => ({
       name: item.name,
-      message: item.proxyUrl || item.dockerProxyUrl || item.configPath,
+      message: `${addedNames.has(item.name) ? "[新] " : ""}${item.proxyUrl || item.dockerProxyUrl || item.configPath}`,
       status: item.configExists ? "ready" : "failed",
     })),
   });
@@ -312,8 +338,52 @@ async function copyProxy(name, button) {
   setLoading(button, true);
   try {
     const targetUrl = instance.proxyUrl || instance.dockerProxyUrl;
-    await navigator.clipboard.writeText(targetUrl);
+    await copyText(targetUrl);
     els.panelHint.textContent = `已复制 ${name} 的代理地址。`;
+  } finally {
+    setLoading(button, false);
+  }
+}
+
+async function copyAllConfigs(button) {
+  setLoading(button, true);
+  try {
+    let data;
+    try {
+      data = await api("/api/configs/export");
+    } catch (error) {
+      if (error.message === "API route not found.") {
+        throw new Error("当前 Web 服务还是旧版本，请重启 `npm run web` 后再试复制全部配置。");
+      }
+      throw error;
+    }
+
+    if (!data.exported || !data.content) {
+      els.panelHint.textContent = "当前没有可复制的实例配置。";
+      renderReport("全部配置复制", {
+        summary: {
+          exported: data.exported || 0,
+          skipped: data.skipped || 0,
+        },
+        results: [],
+      });
+      return;
+    }
+
+    await copyText(data.content);
+    els.panelHint.textContent = `已复制 ${data.exported} 个实例配置，可直接复用或拆分单个 YAML 文档。`;
+    renderReport("全部配置已复制", {
+      summary: {
+        exported: data.exported,
+        skipped: data.skipped,
+        chars: data.content.length,
+      },
+      results: (data.skippedItems || []).map((item) => ({
+        name: item.name,
+        message: item.reason,
+        status: "skipped",
+      })),
+    });
   } finally {
     setLoading(button, false);
   }
@@ -347,6 +417,10 @@ function bindEvents() {
 
   els.testAllBtn.addEventListener("click", () => {
     void runTests("", els.testAllBtn).catch(showError);
+  });
+
+  els.copyAllConfigsBtn.addEventListener("click", () => {
+    void copyAllConfigs(els.copyAllConfigsBtn).catch(showError);
   });
 
   els.searchInput.addEventListener("input", (event) => {

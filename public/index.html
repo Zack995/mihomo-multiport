@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>mihomo-multiport Console</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -82,10 +83,7 @@
               <input id="basePortInput" type="number" value="7891" min="1" />
             </label>
           </div>
-          <label class="toggle">
-            <input id="stopBeforeImport" type="checkbox" checked />
-            <span>导入前自动停止当前受管实例</span>
-          </label>
+          <p class="hint">导入会以追加方式新增节点，不会覆盖或停止已运行的实例；端口与名字若冲突会自动顺延。</p>
           <label class="upload">
             <span>粘贴或选择文件</span>
             <input id="fileInput" type="file" accept=".txt,.yaml,.yml,.json" />
@@ -96,7 +94,7 @@
           ></textarea>
           <div class="form-actions">
             <button id="importBtn" class="btn btn-primary">导入并生成配置</button>
-            <span class="helper">支持一次导入多段内容，系统会自动识别并合并生成实例。</span>
+            <span class="helper">支持一次导入多段内容；“复制全部配置”导出的完整 YAML 也可以直接回贴导入。</span>
           </div>
         </article>
       </section>
@@ -123,6 +121,9 @@
               <option value="missing">配置缺失</option>
             </select>
           </label>
+          <div class="toolbar-actions">
+            <button id="copyAllConfigsBtn" class="btn btn-secondary">复制全部配置</button>
+          </div>
         </div>
         <div class="table-wrap">
           <table>

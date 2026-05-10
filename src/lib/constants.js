@@ -24,7 +24,7 @@ const DEFAULTS = {
   timeoutSeconds: 12,
   localProxyHost: "127.0.0.1",
   serverHost: "127.0.0.1",
-  serverPort: 8787,
+  serverPort: 8799,
   logTailLines: 40,
 };
 

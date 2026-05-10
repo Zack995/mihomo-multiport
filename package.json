@@ -16,6 +16,7 @@
     "status": "node ./src/cli.js status",
     "proxy:test": "node ./src/cli.js test",
     "test": "node --test ./tests/*.test.js",
-    "web": "node ./src/cli.js serve"
+    "web": "node ./src/cli.js serve",
+    "zzc:selfcheck": "bash ./scripts/zzc-selfcheck.sh"
   }
 }

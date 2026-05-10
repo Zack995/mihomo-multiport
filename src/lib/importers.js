@@ -7,7 +7,7 @@ const {
   countIndent,
   ensureDir,
   parseJson,
-  removeFilesByExtension,
+  readFileIfExists,
   resolveProjectPath,
   toProjectRelative,
   trim,
@@ -141,6 +141,24 @@ function extractDisplayNameFromYamlBlock(blockLines) {
   return fallback ? parseYamlScalar(fallback[1]) : "";
 }
 
+function extractManagedConfigName(lines) {
+  for (const line of lines) {
+    const displayName = line.match(/^\s*#\s*Display Name\s*:\s*(.+)$/i);
+    if (displayName) {
+      return parseYamlScalar(displayName[1]);
+    }
+  }
+
+  for (const line of lines) {
+    const sourceName = line.match(/^\s*#\s*Source name\s*:\s*(.+)$/i);
+    if (sourceName) {
+      return parseYamlScalar(sourceName[1]);
+    }
+  }
+
+  return "";
+}
+
 function parseYamlScalar(raw) {
   const value = trim(raw).replace(/ #.*$/, "");
   if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
@@ -214,19 +232,21 @@ function parseYamlNodes(text) {
     blocks = collectYamlBlocks(lines, countIndent(firstListItem));
   }
 
+  const managedConfigName = blocks.length === 1 ? extractManagedConfigName(lines) : "";
+
   return blocks
     .map((blockLines) => {
       const inlineCandidate = blockLines.find((line) => /^\s*-\s*\{/.test(line));
       if (inlineCandidate) {
         const proxy = parseInlineValue(trim(inlineCandidate).replace(/^- /, ""));
         return {
-          name: trim(proxy.name),
+          name: trim(managedConfigName || proxy.name),
           proxy,
           format: "yaml-inline",
         };
       }
 
-      const name = extractDisplayNameFromYamlBlock(blockLines);
+      const name = trim(managedConfigName || extractDisplayNameFromYamlBlock(blockLines));
       return {
         name,
         proxyBlock: blockLines.join("\n"),
@@ -543,6 +563,47 @@ function parseNodes(text, format = "auto") {
   return dedupeNodes(nodes);
 }
 
+function normalizeExistingInstance(instance) {
+  return {
+    name: trim(instance.name),
+    displayName: trim(instance.displayName),
+    configPath: trim(instance.configPath),
+    expectedLoc: trim(instance.expectedLoc),
+    expectedIp: trim(instance.expectedIp),
+    localPort: Number(instance.localPort) || null,
+    scheme: trim(instance.scheme) || "http",
+    format: trim(instance.format) || "",
+  };
+}
+
+function readExistingInstances(manifestPath, csvPath) {
+  if (fs.existsSync(manifestPath)) {
+    const parsed = parseJson(readFileIfExists(manifestPath), {});
+    const list = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed.instances)
+        ? parsed.instances
+        : [];
+    return list
+      .map(normalizeExistingInstance)
+      .filter((item) => item.name && item.configPath);
+  }
+
+  if (fs.existsSync(csvPath)) {
+    return readFileIfExists(csvPath)
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"))
+      .map((line) => {
+        const [name, configPath, expectedLoc, expectedIp] = line.split(",");
+        return normalizeExistingInstance({ name, configPath, expectedLoc, expectedIp });
+      })
+      .filter((item) => item.name && item.configPath);
+  }
+
+  return [];
+}
+
 function importNodes({
   text,
   basePort = DEFAULTS.basePort,
@@ -567,17 +628,33 @@ function importNodes({
   ensureDir(outputDirAbs);
   ensureDir(path.dirname(instancesFileAbs));
   ensureDir(path.dirname(manifestFileAbs));
-  removeFilesByExtension(outputDirAbs, ".yaml");
 
-  const usedSlugs = new Set();
-  const manifest = [];
-  const csvLines = ["# name,config_path,expected_loc,expected_ip"];
+  const existingInstances = readExistingInstances(manifestFileAbs, instancesFileAbs);
+  const usedSlugs = new Set(existingInstances.map((item) => item.name));
+  const usedPorts = new Set(
+    existingInstances
+      .map((item) => Number(item.localPort))
+      .filter((port) => Number.isInteger(port) && port > 0),
+  );
+
+  let portCursor = basePort;
+  function reserveNextPort() {
+    while (usedPorts.has(portCursor)) {
+      portCursor += 1;
+    }
+    const port = portCursor;
+    usedPorts.add(port);
+    portCursor += 1;
+    return port;
+  }
+
+  const newInstances = [];
 
   nodes.forEach((node, index) => {
     validateNode(node);
 
-    const slug = uniqueSlug(node.name, usedSlugs, index);
-    const localPort = basePort + index;
+    const slug = uniqueSlug(node.name, usedSlugs, existingInstances.length + index);
+    const localPort = reserveNextPort();
     const configPathAbs = path.join(outputDirAbs, `${slug}.yaml`);
     const configRelative = toProjectRelative(configPathAbs);
     const proxyName = slug.replace(/-/g, "_");
@@ -586,7 +663,7 @@ function importNodes({
 
     fs.writeFileSync(configPathAbs, configContent, "utf8");
 
-    manifest.push({
+    newInstances.push({
       name: slug,
       displayName: asciiName(node.name) || node.name,
       configPath: configRelative,
@@ -596,23 +673,29 @@ function importNodes({
       scheme: "http",
       format: node.format,
     });
-    csvLines.push(`${slug},${configRelative},${expectedLoc},`);
   });
+
+  const merged = [...existingInstances, ...newInstances];
+  const csvLines = ["# name,config_path,expected_loc,expected_ip"];
+  for (const inst of merged) {
+    csvLines.push(`${inst.name},${inst.configPath},${inst.expectedLoc || ""},${inst.expectedIp || ""}`);
+  }
 
   fs.writeFileSync(instancesFileAbs, `${csvLines.join("\n")}\n`, "utf8");
   fs.writeFileSync(
     manifestFileAbs,
-    `${JSON.stringify({ generatedAt: new Date().toISOString(), instances: manifest }, null, 2)}\n`,
+    `${JSON.stringify({ generatedAt: new Date().toISOString(), instances: merged }, null, 2)}\n`,
     "utf8",
   );
 
   return {
-    count: manifest.length,
+    count: newInstances.length,
     format: detectFormat(text, format),
     outputDir: outputDirAbs,
     instancesFile: instancesFileAbs,
     manifestFile: manifestFileAbs,
-    instances: manifest,
+    instances: merged,
+    added: newInstances,
   };
 }
 

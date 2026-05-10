@@ -17,13 +17,13 @@ function printUsage() {
   node ./src/cli.js stop [instance-name]
   node ./src/cli.js status
   node ./src/cli.js test [instance-name]
-  node ./src/cli.js serve [--host 127.0.0.1] [--port 8787]
+  node ./src/cli.js serve [--host 127.0.0.1] [--port 8799]
 
 Examples:
   node ./src/cli.js import --input nodes-inline.txt
   pbpaste | node ./src/cli.js import --format auto --base-port 9001
   node ./src/cli.js start usa-01
-  node ./src/cli.js serve --port 8787
+  node ./src/cli.js serve --port 8799
 `);
 }
 

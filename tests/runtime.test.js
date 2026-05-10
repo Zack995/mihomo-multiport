@@ -1,10 +1,23 @@
 const fs = require("fs");
+const net = require("net");
 const os = require("os");
 const path = require("path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { runOnInstances, testInstances } = require("../src/lib/runtime");
+
+function listenOnRandomPort(host = "127.0.0.1") {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.once("listening", () => {
+      const { port } = server.address();
+      resolve({ server, port });
+    });
+    server.listen(0, host);
+  });
+}
 
 function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -69,6 +82,60 @@ test("testInstances reports config or port problems as failures", () => {
 
   assert.equal(result.summary.failed, 2);
   assert.equal(result.results.every((item) => item.passed === false), true);
+});
+
+test("startInstance remaps to next free port when the target port is occupied", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mihomo-multiport-portskip-"));
+  const instancesFile = path.join(tempDir, "instances.json");
+  const configPath = path.join(tempDir, "blocked.yaml");
+  const runtimeDir = path.join(tempDir, "runtime");
+  const logsDir = path.join(tempDir, "logs");
+
+  const { server: blocker, port: blockedPort } = await listenOnRandomPort();
+  const fakeMihomoBin = path.join(tempDir, "fake-mihomo");
+  fs.writeFileSync(fakeMihomoBin, "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+  process.env.MIHOMO_BIN = fakeMihomoBin;
+  process.env.MIHOMO_RUNTIME_DIR = runtimeDir;
+  process.env.MIHOMO_LOGS_DIR = logsDir;
+
+  try {
+    fs.writeFileSync(
+      configPath,
+      `# Source name: Blocked\nmixed-port: ${blockedPort}\nmode: rule\n`,
+      "utf8",
+    );
+    fs.writeFileSync(
+      instancesFile,
+      JSON.stringify({
+        instances: [
+          {
+            name: "blocked-01",
+            displayName: "Blocked 01",
+            configPath,
+            localPort: blockedPort,
+            scheme: "http",
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    await runOnInstances("start", "", { instancesFile });
+
+    const updated = JSON.parse(fs.readFileSync(instancesFile, "utf8"));
+    assert.notEqual(updated.instances[0].localPort, blockedPort);
+
+    const rewritten = fs.readFileSync(configPath, "utf8");
+    assert.match(rewritten, new RegExp(`mixed-port: ${updated.instances[0].localPort}`));
+    assert.doesNotMatch(rewritten, new RegExp(`mixed-port: ${blockedPort}\\b`));
+
+    assert.ok(fs.existsSync(path.join(runtimeDir, "blocked-01")), "test runtime dir must be inside tempDir");
+  } finally {
+    blocker.close();
+    delete process.env.MIHOMO_BIN;
+    delete process.env.MIHOMO_RUNTIME_DIR;
+    delete process.env.MIHOMO_LOGS_DIR;
+  }
 });
 
 test("runOnInstances delete removes an instance from the instances file", async () => {

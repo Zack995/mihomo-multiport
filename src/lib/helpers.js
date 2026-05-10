@@ -1,4 +1,5 @@
 const fs = require("fs");
+const net = require("net");
 const path = require("path");
 
 const { PATHS } = require("./constants");
@@ -19,19 +20,6 @@ function readFileIfExists(filePath, encoding = "utf8") {
       return "";
     }
     throw error;
-  }
-}
-
-function removeFilesByExtension(dirPath, extension) {
-  if (!fs.existsSync(dirPath)) {
-    return;
-  }
-
-  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(extension)) {
-      continue;
-    }
-    fs.unlinkSync(path.join(dirPath, entry.name));
   }
 }
 
@@ -59,6 +47,25 @@ function toProjectRelative(targetPath) {
 function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
+  });
+}
+
+function isPortFree(port, host = "127.0.0.1") {
+  return new Promise((resolve) => {
+    const tester = net.createServer();
+    let settled = false;
+    const finish = (free) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(free);
+    };
+    tester.once("error", () => finish(false));
+    tester.once("listening", () => {
+      tester.close(() => finish(true));
+    });
+    tester.listen(port, host);
   });
 }
 
@@ -143,10 +150,10 @@ module.exports = {
   countIndent,
   ensureDir,
   fileMTime,
+  isPortFree,
   isProcessRunning,
   parseJson,
   readFileIfExists,
-  removeFilesByExtension,
   resolveProjectPath,
   sleep,
   tailLines,

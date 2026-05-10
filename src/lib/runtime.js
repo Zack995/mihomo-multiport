@@ -5,7 +5,9 @@ const { spawn, spawnSync } = require("child_process");
 const { DEFAULTS, PATHS } = require("./constants");
 const {
   ensureDir,
+  isPortFree,
   isProcessRunning,
+  parseJson,
   readFileIfExists,
   resolveProjectPath,
   sleep,
@@ -55,6 +57,96 @@ function ensureMihomoBinAvailable() {
     throw new Error(`mihomo binary not found: ${mihomoBin}`);
   }
   return mihomoBin;
+}
+
+const PORT_REMAP_RANGE = 200;
+
+function rewriteConfigMixedPort(configAbs, newPort) {
+  const content = readFileIfExists(configAbs);
+  if (!content) {
+    return false;
+  }
+  const patterns = [/^mixed-port:\s*\d+/m, /^port:\s*\d+/m, /^socks-port:\s*\d+/m];
+  const labels = ["mixed-port", "port", "socks-port"];
+  for (let index = 0; index < patterns.length; index += 1) {
+    if (patterns[index].test(content)) {
+      const replaced = content.replace(patterns[index], `${labels[index]}: ${newPort}`);
+      fs.writeFileSync(configAbs, replaced, "utf8");
+      return true;
+    }
+  }
+  return false;
+}
+
+function updateManifestPort(name, newPort, instancesFilePath) {
+  if (!instancesFilePath) {
+    return;
+  }
+  const abs = resolveProjectPath(instancesFilePath);
+  if (path.extname(abs) !== ".json" || !fs.existsSync(abs)) {
+    return;
+  }
+  const parsed = parseJson(readFileIfExists(abs), null);
+  if (!parsed || !Array.isArray(parsed.instances)) {
+    return;
+  }
+  let changed = false;
+  for (const item of parsed.instances) {
+    if (item.name === name && Number(item.localPort) !== newPort) {
+      item.localPort = newPort;
+      changed = true;
+    }
+  }
+  if (changed) {
+    fs.writeFileSync(abs, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+  }
+}
+
+async function resolveStartPort(instance, options = {}) {
+  const desiredPort = Number(instance.localPort);
+  if (!Number.isInteger(desiredPort) || desiredPort <= 0) {
+    return { ok: false, message: `Missing local port for ${instance.name}` };
+  }
+
+  const reservedPorts = options.reservedPorts || new Set();
+
+  const isReservedBySibling = (port) => port !== desiredPort && reservedPorts.has(port);
+
+  if (!isReservedBySibling(desiredPort) && (await isPortFree(desiredPort))) {
+    return { ok: true, instance, remapped: false };
+  }
+
+  const ceiling = desiredPort + PORT_REMAP_RANGE;
+  for (let candidate = desiredPort + 1; candidate < ceiling; candidate += 1) {
+    if (reservedPorts.has(candidate)) {
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await isPortFree(candidate))) {
+      continue;
+    }
+
+    const rewritten = rewriteConfigMixedPort(instance.configAbs, candidate);
+    if (!rewritten) {
+      return {
+        ok: false,
+        message: `Cannot rewrite mixed-port in ${instance.configAbs}`,
+      };
+    }
+    updateManifestPort(instance.name, candidate, options.instancesFile);
+
+    return {
+      ok: true,
+      instance: { ...instance, localPort: candidate },
+      remapped: true,
+      previousPort: desiredPort,
+    };
+  }
+
+  return {
+    ok: false,
+    message: `No free port for ${instance.name} in [${desiredPort}, ${ceiling})`,
+  };
 }
 
 function operationResult(instance, status, message, extra = {}) {
@@ -169,25 +261,35 @@ async function startInstance(instance, options = {}) {
     );
   }
 
-  ensureDir(runtime.workdir);
-  ensureDir(PATHS.logsDir);
-
   const existingPid = Number(trim(readFileIfExists(runtime.pidFile))) || null;
   if (isProcessRunning(existingPid)) {
     return operationResult(instance, "skipped", `${instance.name} is already running`);
   }
 
+  const portResult = await resolveStartPort(instance, options);
+  if (!portResult.ok) {
+    return operationResult(instance, "failed", portResult.message);
+  }
+  const finalInstance = portResult.instance;
+  if (portResult.remapped && options.reservedPorts) {
+    options.reservedPorts.delete(portResult.previousPort);
+    options.reservedPorts.add(finalInstance.localPort);
+  }
+
+  ensureDir(runtime.workdir);
+  ensureDir(path.dirname(runtime.logFile));
+
   const logFd = fs.openSync(runtime.logFile, "a");
   let child;
   try {
-    child = await spawnDetached(mihomoBin, ["-d", runtime.workdir, "-f", instance.configAbs], {
+    child = await spawnDetached(mihomoBin, ["-d", runtime.workdir, "-f", finalInstance.configAbs], {
       detached: true,
       stdio: ["ignore", logFd, logFd],
     });
     child.unref();
   } catch (error) {
     fs.closeSync(logFd);
-    return operationResult(instance, "failed", error.message);
+    return operationResult(finalInstance, "failed", error.message);
   }
   fs.closeSync(logFd);
 
@@ -196,13 +298,16 @@ async function startInstance(instance, options = {}) {
 
   if (!isProcessRunning(child.pid)) {
     return operationResult(
-      instance,
+      finalInstance,
       "failed",
-      `${instance.name} failed to start. Check ${runtime.logFile}`,
+      `${finalInstance.name} failed to start. Check ${runtime.logFile}`,
     );
   }
 
-  return operationResult(instance, "started", `${instance.name} started`);
+  const message = portResult.remapped
+    ? `${finalInstance.name} started (port ${portResult.previousPort} busy, remapped to ${finalInstance.localPort})`
+    : `${finalInstance.name} started`;
+  return operationResult(finalInstance, "started", message, { remapped: portResult.remapped });
 }
 
 async function stopInstance(instance, options = {}) {
@@ -271,13 +376,28 @@ async function deleteInstance(instance, options = {}) {
 
 async function runOnInstances(action, name, options = {}) {
   const instancesFile = getPreferredInstancesFile(options.instancesFile);
-  const instances = name ? [findInstance(name, instancesFile)] : readInstances(instancesFile);
+  const allInstances = readInstances(instancesFile);
+  const instances = name
+    ? [allInstances.find((item) => item.name === trim(name)) || findInstance(name, instancesFile)]
+    : allInstances;
   const results = [];
+
+  const reservedPorts = action === "start"
+    ? new Set(
+        allInstances
+          .map((item) => Number(item.localPort))
+          .filter((port) => Number.isInteger(port) && port > 0),
+      )
+    : null;
+
+  const startOptions = action === "start"
+    ? { ...options, instancesFile, reservedPorts }
+    : { ...options, instancesFile };
 
   for (const instance of instances) {
     try {
       if (action === "start") {
-        results.push(await startInstance(instance, options));
+        results.push(await startInstance(instance, startOptions));
         continue;
       }
       if (action === "stop") {
