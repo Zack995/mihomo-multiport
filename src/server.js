@@ -7,7 +7,13 @@ const { DEFAULTS, PATHS } = require("./lib/constants");
 const { readFileIfExists, toProjectRelative, trim } = require("./lib/helpers");
 const { importNodes } = require("./lib/importers");
 const { ensureRuntimeLayout, listInstanceStatuses, readLogTail, summaryFromStatuses } = require("./lib/instances");
-const { ensureMihomoBinAvailable, resolveMihomoBin, runOnInstances, testInstances } = require("./lib/runtime");
+const {
+  deleteFailedInstances,
+  ensureMihomoBinAvailable,
+  resolveMihomoBin,
+  runOnInstances,
+  testInstances,
+} = require("./lib/runtime");
 const { createHealthMonitor, asBool } = require("./lib/healthMonitor");
 const zzc = require("./clients/zzcClient");
 
@@ -260,6 +266,7 @@ const API_DOCS = {
     { method: "POST", path: "/api/start", auth: "none", description: "启动单个或全部实例。" },
     { method: "POST", path: "/api/stop", auth: "none", description: "停止单个或全部实例。" },
     { method: "POST", path: "/api/test", auth: "none", description: "走代理打 Cloudflare trace，校验 IP / 地区。" },
+    { method: "POST", path: "/api/delete-failed", auth: "none", description: "测试所有节点，重试失败后删除仍失败的实例。" },
     { method: "POST", path: "/api/delete", auth: "none", description: "删除实例（含配置、日志、运行目录）。" },
   ],
   zzc_center: {
@@ -394,10 +401,26 @@ async function handleApi(request, response, requestUrl) {
 
   if (request.method === "POST" && pathname === "/api/test") {
     const body = await parseBody(request);
-    const result = testInstances(trim(body.name), {});
+    const result = await testInstances(trim(body.name), {});
     json(response, 200, {
       ok: true,
       result,
+    });
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/delete-failed") {
+    const body = await parseBody(request);
+    const result = await deleteFailedInstances(trim(body.name), {
+      retryAttempts: Number(body.retryAttempts) || undefined,
+      retryDelayMs: Number(body.retryDelayMs) || undefined,
+    });
+    const statuses = listInstanceStatuses();
+    json(response, 200, {
+      ok: true,
+      result,
+      meta: getMeta(statuses),
+      instances: statuses,
     });
     return true;
   }

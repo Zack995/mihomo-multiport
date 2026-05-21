@@ -60,6 +60,8 @@ function ensureMihomoBinAvailable() {
 }
 
 const PORT_REMAP_RANGE = 200;
+const DEFAULT_TEST_RETRY_ATTEMPTS = 3;
+const DEFAULT_TEST_RETRY_DELAY_MS = 3000;
 
 function rewriteConfigMixedPort(configAbs, newPort) {
   const content = readFileIfExists(configAbs);
@@ -433,6 +435,18 @@ function parseTraceOutput(traceOutput) {
   return entries;
 }
 
+function resolveTestRetryPolicy(options = {}) {
+  const retryAttemptsValue = Number(options.retryAttempts ?? process.env.TEST_RETRY_ATTEMPTS ?? DEFAULT_TEST_RETRY_ATTEMPTS);
+  const retryDelayMsValue = Number(options.retryDelayMs ?? process.env.TEST_RETRY_DELAY_MS ?? DEFAULT_TEST_RETRY_DELAY_MS);
+  const retryAttempts = Number.isFinite(retryAttemptsValue) && retryAttemptsValue >= 1
+    ? Math.floor(retryAttemptsValue)
+    : DEFAULT_TEST_RETRY_ATTEMPTS;
+  const retryDelayMs = Number.isFinite(retryDelayMsValue) && retryDelayMsValue >= 0
+    ? Math.floor(retryDelayMsValue)
+    : DEFAULT_TEST_RETRY_DELAY_MS;
+  return { retryAttempts, retryDelayMs };
+}
+
 function testInstance(instance, options = {}) {
   const traceUrl = options.traceUrl || process.env.TRACE_URL || DEFAULTS.traceUrl;
   const timeoutSeconds = Number(
@@ -447,6 +461,7 @@ function testInstance(instance, options = {}) {
       name: instance.name,
       displayName: status.displayName,
       proxyUrl: status.proxyUrl,
+      retryable: false,
       reason: `Missing config: ${instance.configAbs}`,
     };
   }
@@ -457,6 +472,7 @@ function testInstance(instance, options = {}) {
       name: instance.name,
       displayName: status.displayName,
       proxyUrl: status.proxyUrl,
+      retryable: false,
       reason: `Missing local port for ${instance.name}`,
     };
   }
@@ -486,6 +502,7 @@ function testInstance(instance, options = {}) {
       passed: false,
       name: instance.name,
       proxyUrl,
+      retryable: true,
       reason: trim(curlResult.stderr) || "Proxy request failed",
     };
   }
@@ -500,6 +517,7 @@ function testInstance(instance, options = {}) {
       passed: false,
       name: instance.name,
       proxyUrl,
+      retryable: true,
       reason: "Could not parse Cloudflare trace output.",
     };
   }
@@ -521,18 +539,54 @@ function testInstance(instance, options = {}) {
     actualLoc,
     expectedLoc: status.expectedLoc,
     expectedIp: status.expectedIp,
+    retryable: reasons.length > 0,
     reason: reasons.join("; "),
   };
 }
 
-function testInstances(name, options = {}) {
+async function testInstanceWithRetry(instance, options = {}) {
+  const { retryAttempts, retryDelayMs } = resolveTestRetryPolicy(options);
+  let lastResult = null;
+
+  for (let attempt = 1; attempt <= retryAttempts; attempt += 1) {
+    const result = testInstance(instance, options);
+    lastResult = {
+      ...result,
+      attempts: attempt,
+      retryAttempts,
+      retryDelayMs,
+    };
+
+    if (result.passed || result.retryable === false) {
+      return lastResult;
+    }
+
+    if (attempt < retryAttempts) {
+      // eslint-disable-next-line no-await-in-loop
+      await sleep(retryDelayMs);
+    }
+  }
+
+  return {
+    ...lastResult,
+    retryable: false,
+  };
+}
+
+async function testInstances(name, options = {}) {
   const instancesFile = getPreferredInstancesFile(options.instancesFile);
   const instances = name ? [findInstance(name, instancesFile)] : readInstances(instancesFile);
   const results = [];
+  let retried = 0;
 
   for (const instance of instances) {
     try {
-      results.push(testInstance(instance, options));
+      // eslint-disable-next-line no-await-in-loop
+      const result = await testInstanceWithRetry(instance, options);
+      if (Number(result.attempts) > 1) {
+        retried += 1;
+      }
+      results.push(result);
     } catch (error) {
       const status = getInstanceStatus(instance);
       results.push({
@@ -540,6 +594,7 @@ function testInstances(name, options = {}) {
         name: instance.name,
         displayName: status.displayName,
         proxyUrl: status.proxyUrl,
+        retryable: false,
         reason: error.message,
       });
     }
@@ -551,8 +606,85 @@ function testInstances(name, options = {}) {
       total: results.length,
       passed: results.filter((item) => item.passed).length,
       failed: results.filter((item) => !item.passed).length,
+      retried,
     },
     results,
+  };
+}
+
+async function deleteFailedInstances(name, options = {}) {
+  const instancesFile = getPreferredInstancesFile(options.instancesFile);
+  const allInstances = readInstances(instancesFile);
+  const testResult = await testInstances(name, options);
+  const instanceMap = new Map(allInstances.map((instance) => [instance.name, instance]));
+  const results = [];
+  const deleteResults = [];
+  let deleted = 0;
+  let deleteFailed = 0;
+
+  for (const item of testResult.results) {
+    if (item.passed) {
+      results.push({
+        ...item,
+        status: "passed",
+        message: item.reason || `Passed after ${item.attempts || 1} attempt(s)`,
+      });
+      continue;
+    }
+
+    const instance = instanceMap.get(item.name);
+    if (!instance) {
+      results.push({
+        ...item,
+        status: "delete_failed",
+        message: `${item.reason || "test failed"}; instance not found for deletion`,
+      });
+      deleteFailed += 1;
+      continue;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    const deleteResult = await deleteInstance(instance, { ...options, instancesFile });
+    deleteResults.push(deleteResult);
+
+    if (deleteResult.status === "deleted") {
+      deleted += 1;
+      results.push({
+        ...item,
+        status: "deleted",
+        passed: false,
+        message: `${item.reason || "test failed"}; deleted after ${item.attempts || 1} attempt(s)`,
+        deleteMessage: deleteResult.message,
+      });
+      continue;
+    }
+
+    deleteFailed += 1;
+    results.push({
+      ...item,
+      status: "delete_failed",
+      passed: false,
+      message: `${item.reason || "test failed"}; delete failed: ${deleteResult.message}`,
+      deleteMessage: deleteResult.message,
+    });
+  }
+
+  return {
+    instancesFile,
+    summary: {
+      total: testResult.summary.total,
+      passed: testResult.summary.passed,
+      failed: testResult.summary.failed,
+      retried: testResult.summary.retried,
+      deleted,
+      deleteFailed,
+    },
+    results,
+    test: testResult,
+    delete: {
+      summary: summarizeOperationResults(deleteResults),
+      results: deleteResults,
+    },
   };
 }
 
@@ -562,9 +694,11 @@ module.exports = {
   resolveMihomoBin,
   runOnInstances,
   deleteInstance,
+  deleteFailedInstances,
   startInstance,
   stopInstance,
   summarizeOperationResults,
   testInstance,
+  testInstanceWithRetry,
   testInstances,
 };

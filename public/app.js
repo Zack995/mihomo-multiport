@@ -7,6 +7,7 @@ const state = {
 const els = {
   basePortInput: document.getElementById("basePortInput"),
   copyAllConfigsBtn: document.getElementById("copyAllConfigsBtn"),
+  deleteFailedBtn: document.getElementById("deleteFailedBtn"),
   fileInput: document.getElementById("fileInput"),
   formatSelect: document.getElementById("formatSelect"),
   importBtn: document.getElementById("importBtn"),
@@ -109,10 +110,10 @@ async function copyText(text) {
 }
 
 function reportCardClass(item) {
-  if (item.passed === false || item.status === "failed") {
+  if (["failed", "delete_failed"].includes(item.status) || (item.passed === false && item.status !== "deleted")) {
     return "report-card report-card-failed";
   }
-  if (item.passed === true || ["started", "stopped", "ready", "deleted"].includes(item.status)) {
+  if (item.passed === true || ["started", "stopped", "ready", "deleted", "passed"].includes(item.status)) {
     return "report-card report-card-success";
   }
   return "report-card";
@@ -184,6 +185,9 @@ function actionTitle(path, payload) {
   }
   if (path === "/api/test") {
     return payload?.name ? `测试 ${payload.name}` : "测试完成";
+  }
+  if (path === "/api/delete-failed") {
+    return payload?.name ? `测试并删除 ${payload.name}` : "测试并删除失败节点";
   }
   if (path === "/api/delete") {
     return payload?.name ? `删除 ${payload.name}` : "删除完成";
@@ -272,6 +276,8 @@ async function postAction(path, payload, button) {
           (data.result.summary.stopped || 0) +
           (data.result.summary.deleted || 0);
         els.panelHint.textContent = `最近一次操作：成功 ${succeeded}，跳过 ${data.result.summary.skipped || 0}，失败 ${data.result.summary.failed || 0}。`;
+      } else if (path === "/api/delete-failed") {
+        els.panelHint.textContent = `最近一次操作：通过 ${data.result.summary.passed}，删除失败节点 ${data.result.summary.deleted}，仍失败 ${data.result.summary.failed}，重试 ${data.result.summary.retried || 0}。`;
       }
     }
     return data;
@@ -327,7 +333,7 @@ async function showLog(name, button) {
 
 async function runTests(name, button) {
   const data = await postAction("/api/test", { name }, button);
-  els.panelHint.textContent = `最近一次测试：通过 ${data.result.summary.passed}，失败 ${data.result.summary.failed}。`;
+  els.panelHint.textContent = `最近一次测试：通过 ${data.result.summary.passed}，失败 ${data.result.summary.failed}，重试 ${data.result.summary.retried || 0}。`;
 }
 
 async function copyProxy(name, button) {
@@ -417,6 +423,10 @@ function bindEvents() {
 
   els.testAllBtn.addEventListener("click", () => {
     void runTests("", els.testAllBtn).catch(showError);
+  });
+
+  els.deleteFailedBtn.addEventListener("click", () => {
+    void postAction("/api/delete-failed", {}, els.deleteFailedBtn).catch(showError);
   });
 
   els.copyAllConfigsBtn.addEventListener("click", () => {

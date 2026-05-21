@@ -108,9 +108,11 @@ function printTestResults(result) {
     const ip = item.actualIp ? ` ip=${item.actualIp}` : "";
     const proxy = item.proxyUrl || "n/a";
     const reason = item.reason ? ` ${item.reason}` : "";
-    console.log(`[${label}] ${item.name}${location}${ip} via ${proxy}${reason}`);
+    const attempts = item.attempts > 1 ? ` attempts=${item.attempts}` : "";
+    console.log(`[${label}] ${item.name}${location}${ip} via ${proxy}${attempts}${reason}`);
   }
-  console.log(`Summary: total=${result.summary.total} passed=${result.summary.passed} failed=${result.summary.failed}`);
+  const retried = result.summary.retried ? ` retried=${result.summary.retried}` : "";
+  console.log(`Summary: total=${result.summary.total} passed=${result.summary.passed} failed=${result.summary.failed}${retried}`);
 }
 
 async function commandImport(args) {
@@ -166,13 +168,13 @@ async function commandStop(args) {
   }
 }
 
-function commandTest(args) {
+async function commandTest(args) {
   const { options, positional } = parseFlags(args);
   if (options.help) {
     printUsage();
     return;
   }
-  const result = testInstances(positional[0] || "", {});
+  const result = await testInstances(positional[0] || "", {});
   printTestResults(result);
   if (result.summary.failed > 0) {
     process.exitCode = 1;
@@ -217,7 +219,7 @@ async function run(argv = process.argv.slice(2)) {
     return;
   }
   if (command === "test") {
-    commandTest(args);
+    await commandTest(args);
     return;
   }
   if (command === "serve") {
