@@ -18,22 +18,59 @@ const {
 function splitTopLevel(input, separator) {
   const parts = [];
   let current = "";
-  let depth = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let quote = null;
+  let escaped = false;
 
   for (const char of input) {
+    if (quote) {
+      current += char;
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      current += char;
+      continue;
+    }
+
     if (char === "{") {
-      depth += 1;
+      braceDepth += 1;
       current += char;
       continue;
     }
 
     if (char === "}") {
-      depth -= 1;
+      braceDepth -= 1;
       current += char;
       continue;
     }
 
-    if (char === separator && depth === 0) {
+    if (char === "[") {
+      bracketDepth += 1;
+      current += char;
+      continue;
+    }
+
+    if (char === "]") {
+      bracketDepth -= 1;
+      current += char;
+      continue;
+    }
+
+    if (char === separator && braceDepth === 0 && bracketDepth === 0 && !quote) {
       parts.push(current.trim());
       current = "";
       continue;
@@ -49,10 +86,32 @@ function splitTopLevel(input, separator) {
   return parts;
 }
 
+function unquote(value) {
+  const normalized = trim(value);
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"')) ||
+    (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    return normalized.slice(1, -1);
+  }
+  return normalized;
+}
+
+function parseInlineList(body) {
+  if (!trim(body)) {
+    return [];
+  }
+
+  return splitTopLevel(body, ",").map((item) => parseInlineValue(item));
+}
+
 function parseInlineValue(value) {
   const normalized = trim(value);
   if (normalized.startsWith("{") && normalized.endsWith("}")) {
     return parseInlineMap(normalized.slice(1, -1));
+  }
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    return parseInlineList(normalized.slice(1, -1));
   }
   if (normalized === "true") {
     return true;
@@ -63,7 +122,14 @@ function parseInlineValue(value) {
   if (/^-?\d+$/.test(normalized)) {
     return Number(normalized);
   }
-  return normalized.replace(/^"|"$/g, "").replace(/^'|'$/g, "");
+  const unquoted = unquote(normalized);
+  if (unquoted.startsWith("[") && unquoted.endsWith("]")) {
+    return parseInlineList(unquoted.slice(1, -1));
+  }
+  if (unquoted.startsWith("{") && unquoted.endsWith("}")) {
+    return parseInlineMap(unquoted.slice(1, -1));
+  }
+  return unquoted;
 }
 
 function parseInlineMap(body) {

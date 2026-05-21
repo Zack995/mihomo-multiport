@@ -207,3 +207,25 @@ test("importNodes re-imports exported managed configs and preserves display name
     ["JP", "US"],
   );
 });
+
+test("importNodes preserves inline alpn arrays for anytls proxies", () => {
+  const tempDir = makeTempDir("mihomo-multiport-anytls-");
+  const outputDir = path.join(tempDir, "configs");
+  const instancesFile = path.join(tempDir, "instances.csv");
+  const manifestFile = path.join(tempDir, "instances.json");
+
+  const result = importNodes({
+    text: [
+      "- {name: 🇯🇵 JPN 01, server: 504a84f.vlrzgf.sbs, port: 22201, type: anytls, client-fingerprint: chrome, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, alpn: [h2], password: 6nJqlZCl6t, sni: cdn1.tencentcloud.net, skip-cert-verify: true, udp: true, tfo: false}",
+    ].join("\n"),
+    outputDir,
+    instancesFile,
+    manifestFile,
+  });
+
+  const config = fs.readFileSync(path.join(outputDir, "jpn-01.yaml"), "utf8");
+
+  assert.equal(result.count, 1);
+  assert.match(config, /alpn:\n\s+- "h2"/);
+  assert.doesNotMatch(config, /alpn:\s*\[h2\]/);
+});
